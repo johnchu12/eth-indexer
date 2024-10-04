@@ -1,7 +1,7 @@
 services:
   pgsql:
     image: postgres:15
-    container_name: pgsql
+    container_name: eth-indexer-pgsql
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: mysecretpassword
@@ -20,7 +20,7 @@ services:
     build:
       context: .
       dockerfile: ./docker/indexer.Dockerfile
-    container_name: indexer
+    container_name: eth-indexer-indexer
     depends_on:
       pgsql:
         condition: service_healthy
@@ -31,7 +31,7 @@ services:
     build:
       context: .
       dockerfile: ./docker/api.Dockerfile
-    container_name: api
+    container_name: eth-indexer-api
     depends_on:
       pgsql:
         condition: service_healthy
