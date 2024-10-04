@@ -1,0 +1,48 @@
+{
+  "networks": {
+    "mainnet": {
+      "chainId": 1,
+      "rpc_url": "https://eth-mainnet.g.alchemy.com/v2/..."
+    },
+    "base": {
+      "chainId": 8453,
+      "rpc_url": "https://base-mainnet.g.alchemy.com/v2/..."
+    }
+  },
+  "contracts": {
+    "UniswapV2": {
+      "abi": "uniswapV2",
+      "network": {
+        "mainnet": {
+          "address": "0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc",
+          "startBlock": 20857035
+        }
+      },
+      "events": ["Swap"]
+    },
+    "USDC": {
+      "abi": "erc20_usdc",
+      "network": {
+        "mainnet": {
+          "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+          "startBlock": 20811139
+        },
+        "base": {
+          "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "startBlock": 20570509
+        }
+      },
+      "events": ["Transfer", "Approval"]
+    },
+    "AAVE": {
+      "abi": "erc20_usdc",
+      "network": {
+        "mainnet": {
+          "address": "0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9",
+          "startBlock": 20801139
+        }
+      },
+      "events": ["Transfer"]
+    }
+  }
+}

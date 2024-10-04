@@ -1,0 +1,19 @@
+# macOS system files
+.DS_Store
+
+# Coverage data
+coverage.out
+
+# config
+config.json
+
+# Go language
+/bin/
+/vendor/
+
+# Docker
+docker-compose.override.yml
+
+# IDE directories
+.idea/
+.vscode/
