@@ -59,6 +59,10 @@ eth-indexer is a blockchain-based application designed to provide efficient data
    ```env
    PORT=8080
    ```
+3. **Add `config.json`**
+
+   Copy `config.example.json` file in the `/internal/indexer` directory to `config.json` and set the `rpc_url` key.
+
 
 ### Using Makefile Commands
 
