@@ -13,9 +13,6 @@ import (
 	"hw/pkg/pg"
 
 	"github.com/golang-migrate/migrate/v4"
-	"go.uber.org/fx"
-	"go.uber.org/fx/fxevent"
-	"go.uber.org/zap"
 
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -54,46 +51,46 @@ func setupIndexer(db *pg.PostgresDB, svc service.Service) error {
 		// If you need to handle other events, add them here
 		"USDC:mainnet:Transfer": handlers.HandleTransfer,
 		"USDC:base:Approval":    handlers.HandleApproval,
-		// "AAVE:mainnet:Approval":  handlers.HandleApproval,
+		"AAVE:mainnet:Approval": handlers.HandleApproval,
 	}
 
 	// Create indexer with registered events only
-	indexer, err := ethindexa.NewIndexer(db, svc, handlersMap)
+	_, err := ethindexa.NewIndexer(db, svc, handlersMap)
 	if err != nil {
 		return fmt.Errorf("failed to create indexer: %w", err)
 	}
 
 	// Start all event listeners
-	indexer.StartAllEventListeners()
+	// indexer.StartAllEventListeners()
 
 	return nil
 }
 
 func main() {
-	app := fx.New(
-		// Provide dependency services
-		fx.Provide(
-			logger.Init,
-			pg.NewPostgresDB,
-			repository.NewRepository,
-			service.NewService,
-		),
+	// Initialize logger
+	logger.Init()
 
-		// Configure HTTP server
-		fx.Invoke(
-			migrateDB,
-			setupIndexer,
-		),
+	// Initialize PostgresDB
+	db, err := pg.NewPostgresDB()
+	if err != nil {
+		log.Fatalf("Failed to connect to PostgresDB: %v", err)
+	}
+	defer db.Close()
 
-		// dependency services' logs can be commented
-		fx.NopLogger,
+	// Initialize Repository
+	repo := repository.NewRepository(db)
 
-		fx.WithLogger(
-			func(log *zap.Logger) fxevent.Logger {
-				return &logger.CustomZapLogger{Logger: log}
-			},
-		),
-	)
+	// Initialize Service
+	svc := service.NewService(repo)
 
-	app.Run()
+	// Perform database migrations
+	migrateDB()
+
+	// Setup Indexer
+	if err := setupIndexer(db, svc); err != nil {
+		log.Fatalf("Failed to setup indexer: %v", err)
+	}
+
+	// Block main goroutine
+	select {}
 }

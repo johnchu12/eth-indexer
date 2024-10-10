@@ -182,10 +182,10 @@ func (bn *BigN) ToTruncateFloat64(d int32) float64 {
 		bn.err = fmt.Errorf("invalid decimal places: negative value")
 		return 0.0
 	}
-	f64, exact := bn.num.Truncate(d).Float64()
-	if !exact {
-		logger.Warnf("bn.num %+v, truncate to float64 %+v, not exact", bn.num.String(), f64)
-	}
+	f64, _ := bn.num.Truncate(d).Float64()
+	// if !exact {
+	// 	logger.Warnf("bn.num %+v, truncate to float64 %+v, not exact", bn.num.String(), f64)
+	// }
 	return f64
 }
 

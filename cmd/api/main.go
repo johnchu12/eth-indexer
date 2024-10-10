@@ -2,17 +2,16 @@ package main
 
 import (
 	"log"
+	"net/http"
 
 	"hw/internal/repository"
 	"hw/internal/service"
 	"hw/internal/transport/api"
 	"hw/pkg/environment"
 	"hw/pkg/logger"
-	httpserver "hw/pkg/micro-tree/http/server"
+	"hw/pkg/micro-tree/http/server"
 	"hw/pkg/pg"
 
-	"go.uber.org/fx"
-	"go.uber.org/fx/fxevent"
 	"go.uber.org/zap"
 )
 
@@ -36,32 +35,32 @@ func init() {
 
 // TODO: add cache
 func main() {
-	app := fx.New(
-		// Provide dependency services
-		fx.Provide(
-			logger.Init,
-			pg.NewPostgresDB,
-			repository.NewRepository,
-			service.NewService,
-		),
-		// Start HTTP server
-		httpserver.Module,
+	// Initialize the database
+	db, err := pg.NewPostgresDB()
+	if err != nil {
+		log.Fatal("Failed to initialize the database", zap.Error(err))
+	}
 
-		// Configure HTTP server
-		fx.Invoke(
-			api.ConfigureHTTPServer,
-		),
+	// Initialize the repository
+	repo := repository.NewRepository(db)
 
-		// dependency services' logs can be commented
-		fx.NopLogger,
+	// Initialize the service
+	svc := service.NewService(repo)
 
-		fx.WithLogger(
-			func(log *zap.Logger) fxevent.Logger {
-				return &logger.CustomZapLogger{Logger: log}
-			},
-		),
-	)
+	l := logger.Init()
 
-	// Run the application
-	app.Run()
+	app := server.NewHTTPServer()
+
+	server := api.Server{
+		Logger:  l,
+		Service: svc,
+	}
+	// Configure HTTP server
+	api.ConfigureHTTPServer(app, server)
+
+	// Start HTTP server
+	logger.Infof("Start server on port: %s", config.PORT)
+	if err := http.ListenAndServe(":"+config.PORT, app); err != nil {
+		log.Fatal("Failed to start the server", zap.Error(err))
+	}
 }

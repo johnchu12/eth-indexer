@@ -36,6 +36,24 @@ eth-indexer is a blockchain-based application designed to provide efficient data
    +-------------------------------+
 ```
 
+### Indexer Detailed Architecture
+
+```
++------------------+    +------------------+    +------------------+
+|  BlockFetcher    | -> |  LogProcessor    | -> |  TaskHandler     |
++------------------+    +------------------+    +------------------+
+       |                       |                       |
+       |                       |                       |
+       v                       v                       v
+ [Fetches blocks]      [Processes logs]      [Handles events]
+```
+
+#### Component Responsibilities
+
+- **BlockFetcher**: Fetches new blocks from the blockchain.
+- **LogProcessor**: Processes the logs from fetched blocks.
+- **TaskHandler**: Handles the events extracted from the logs.
+
 ## Installation and Usage
 
 ### Prerequisites
@@ -62,6 +80,12 @@ eth-indexer is a blockchain-based application designed to provide efficient data
 3. **Add `config.json`**
 
    Copy `config.example.json` file in the `/internal/indexer` directory to `config.json` and set the `rpc_url` key.
+
+   **netowrk of `finalityBlockCount`:**
+
+   ```plaintext
+   The `finalityBlockCount` in `config.json` is used to synchronize blocks up to a specified block. This helps to avoid issues caused by block forks by ensuring that only blocks that are sufficiently confirmed are processed.
+   ```
 
 
 ### Using Makefile Commands

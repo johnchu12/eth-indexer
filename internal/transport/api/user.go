@@ -1,9 +1,13 @@
 package api
 
 import (
-	"hw/pkg/bigrat"
+	"net/http"
 
-	"github.com/gofiber/fiber/v2"
+	"hw/pkg/bigrat"
+	"hw/pkg/micro-tree/http/middleware"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/render"
 )
 
 // task represents a single task with a description and points.
@@ -27,22 +31,24 @@ type response struct {
 }
 
 // GetUser handles retrieving a user's data.
-func (s *Server) GetUser(c *fiber.Ctx) error {
-	id := c.Params("id")
+func (s *Server) GetUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
 
 	res := &response{
 		Pool: make(map[string]*pool),
 	}
 	totalUsdValue := bigrat.NewBigN(0)
 
-	user, err := s.Service.GetOrCreateAccount(c.Context(), id)
+	user, err := s.Service.GetOrCreateAccount(r.Context(), id)
 	if err != nil {
-		return handleError(c, fiber.StatusInternalServerError, err)
+		render.Render(w, r, &errorResponse{Error: err.Error()})
+		return
 	}
 
-	swapSummary, err := s.Service.GetUserSwapSummary(c.Context(), id)
+	swapSummary, err := s.Service.GetUserSwapSummary(r.Context(), id)
 	if err != nil {
-		return handleError(c, fiber.StatusInternalServerError, err)
+		render.Render(w, r, &errorResponse{Error: err.Error()})
+		return
 	}
 
 	for token, usdValue := range swapSummary {
@@ -58,9 +64,11 @@ func (s *Server) GetUser(c *fiber.Ctx) error {
 		totalUsdValue = totalUsdValue.Add(usdValue)
 		p.TotalUsdValue += usdValue
 
-		pointsHistory, err := s.Service.GetPointsHistory(c.Context(), id, token)
+		pointsHistory, err := s.Service.GetPointsHistory(r.Context(), id, token)
 		if err != nil {
-			return handleError(c, fiber.StatusInternalServerError, err)
+			middleware.HTTPErrorLogging(w, r, err)
+			render.Render(w, r, &errorResponse{Error: err.Error()})
+			return
 		}
 
 		for _, points := range pointsHistory {
@@ -75,12 +83,5 @@ func (s *Server) GetUser(c *fiber.Ctx) error {
 	res.TotalPoints = user.TotalPoints
 	res.TotalUsdValue = totalUsdValue.ToTruncateFloat64(6)
 
-	return c.JSON(res)
-}
-
-// handleError simplifies error responses.
-func handleError(c *fiber.Ctx, status int, err error) error {
-	return c.Status(status).JSON(fiber.Map{
-		"error": err.Error(),
-	})
+	render.JSON(w, r, res)
 }

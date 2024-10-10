@@ -17,6 +17,8 @@ import (
 // TODO: use transaction
 
 func main() {
+	logger.Init()
+
 	db, err := pg.NewPostgresDB()
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)

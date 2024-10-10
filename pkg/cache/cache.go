@@ -2,12 +2,16 @@ package cache
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"hw/pkg/common"
 
@@ -15,9 +19,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// TODO: SetXX, SetNX
-
-// Cache interface defines the methods for interacting with the cache
+// Cache defines the methods for interacting with the cache.
 type Cache interface {
 	Get(ctx context.Context, key string, object interface{}) error
 	Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error
@@ -26,15 +28,15 @@ type Cache interface {
 	Del(ctx context.Context, key string) error
 }
 
-// cacheImpl is the implementation of the Cache interface
+// cacheImpl implements the Cache interface.
 type cacheImpl struct {
 	prefix     string
 	cache      *cache.Cache
-	redisCache *redis.Client
 	defaultTTL time.Duration
+	sf         *singleflight.Group
 }
 
-// NewLocalCache creates a new local cache instance
+// NewLocalCache creates a new local cache instance.
 func NewLocalCache() Cache {
 	prefix := common.GetEnv("CACHE_PREFIX", "")
 	defaultTTL := common.MustParseDuration(common.GetEnv("CACHE_DEFAULT_TTL", "1m"))
@@ -44,10 +46,11 @@ func NewLocalCache() Cache {
 			LocalCache: cache.NewTinyLFU(1000, defaultTTL),
 		}),
 		defaultTTL: defaultTTL,
+		sf:         &singleflight.Group{},
 	}
 }
 
-// NewRedisCache creates a new Redis cache instance
+// NewRedisCache creates a new Redis cache instance.
 func NewRedisCache() Cache {
 	prefix := common.GetEnv("CACHE_PREFIX", "")
 	redisAddr := common.GetEnv("CACHE_REDIS_ADDR", "localhost:6379")
@@ -65,12 +68,12 @@ func NewRedisCache() Cache {
 	return &cacheImpl{
 		prefix:     prefix,
 		cache:      cache.New(&cache.Options{Redis: redisClient}),
-		redisCache: redisClient,
 		defaultTTL: defaultTTL,
+		sf:         &singleflight.Group{},
 	}
 }
 
-// NewHybridCache creates a new hybrid cache instance (local + Redis)
+// NewHybridCache creates a new hybrid cache instance combining local and Redis caches.
 func NewHybridCache() Cache {
 	prefix := common.GetEnv("CACHE_PREFIX", "")
 	redisAddr := common.GetEnv("CACHE_REDIS_ADDR", "localhost:6379")
@@ -91,17 +94,17 @@ func NewHybridCache() Cache {
 			LocalCache: cache.NewTinyLFU(1000, defaultTTL),
 			Redis:      redisClient,
 		}),
-		redisCache: redisClient,
 		defaultTTL: defaultTTL,
+		sf:         &singleflight.Group{},
 	}
 }
 
-// Get retrieves a value from the cache
+// Get retrieves a value from the cache.
 func (c *cacheImpl) Get(ctx context.Context, key string, object interface{}) error {
 	return c.cache.Get(ctx, c.FormatKey(key), object)
 }
 
-// Set stores a value in the cache with the specified TTL (or default TTL if not provided)
+// Set stores a value in the cache with the specified TTL.
 func (c *cacheImpl) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
 	if ttl < 0 {
 		return fmt.Errorf("TTL cannot be negative")
@@ -120,46 +123,83 @@ func (c *cacheImpl) Set(ctx context.Context, key string, value interface{}, ttl 
 	})
 }
 
-// ErrDataNotFound is returned when the requested data is not found in the cache
+// ErrDataNotFound is returned when the requested data is not found in the cache.
 var ErrDataNotFound = errors.New("data not found")
 
-// GetFunc retrieves a value from the cache or computes it using the provided function
-// This method uses the Once functionality to ensure that only one goroutine computes the value
-// while others wait for the result
+type NullObject struct{}
+
+// GetFunc retrieves a value from the cache or computes it using the provided function.
+// This method ensures that only one goroutine computes the value while others wait for the result.
 func (c *cacheImpl) GetFunc(ctx context.Context, key string, obj interface{}, ttl time.Duration, fn func(ctx context.Context) (interface{}, error)) error {
 	if ttl == 0 {
 		ttl = c.defaultTTL
 	}
 
-	// The Once method ensures that only one goroutine executes the function to compute the value
-	// If multiple goroutines try to access the same key simultaneously, only one will execute the function
-	// while others wait for the result. This helps prevent the "thundering herd" problem.
-	err := c.cache.Once(&cache.Item{
-		Ctx:   ctx,
-		Key:   c.FormatKey(key),
-		Value: obj,
-		TTL:   ttl,
-		Do: func(item *cache.Item) (interface{}, error) {
-			// This function is executed only if the value is not found in the cache
-			result, err := fn(ctx)
+	v, err, _ := c.sf.Do(key, func() (interface{}, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("context cancelled before execution: %w", err)
+		}
+
+		result, err := fn(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("error executing function: %w", err)
+		}
+
+		if result == nil {
+			if err := c.Set(ctx, key, NullObject{}, ttl); err != nil {
+				return nil, fmt.Errorf("error setting null object in cache: %w", err)
+			}
+			return nil, ErrDataNotFound
+		}
+
+		var cacheValue interface{}
+		switch val := result.(type) {
+		case []byte:
+			cacheValue = val
+		case string:
+			cacheValue = []byte(val)
+		default:
+			jsonData, err := json.Marshal(result)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("error marshaling result to JSON: %w", err)
 			}
-			if result == nil {
-				return nil, ErrDataNotFound
+			if err := ctx.Err(); err != nil {
+				return nil, fmt.Errorf("context cancelled after JSON marshaling: %w", err)
 			}
-			return result, nil
-		},
+			cacheValue = jsonData
+		}
+
+		if err := c.Set(ctx, key, cacheValue, ttl); err != nil {
+			return result, fmt.Errorf("error setting value in cache (result still returned): %w", err)
+		}
+
+		return result, nil
 	})
 
-	if err == ErrDataNotFound {
-		return ErrDataNotFound
+	if err != nil {
+		if errors.Is(err, ErrDataNotFound) {
+			return ErrDataNotFound
+		}
+		return err
 	}
 
-	return err
+	if v == nil {
+		reflect.ValueOf(obj).Elem().Set(reflect.Zero(reflect.TypeOf(obj).Elem()))
+	} else {
+		switch val := v.(type) {
+		case []byte:
+			reflect.ValueOf(obj).Elem().SetBytes(val)
+		case string:
+			reflect.ValueOf(obj).Elem().SetString(val)
+		default:
+			reflect.ValueOf(obj).Elem().Set(reflect.ValueOf(v))
+		}
+	}
+
+	return nil
 }
 
-// FormatKey generates a formatted cache key with an optional prefix
+// FormatKey generates a formatted cache key with an optional prefix.
 func (c *cacheImpl) FormatKey(args ...interface{}) string {
 	if c.prefix != "" {
 		return join(c.prefix, join(args...))
@@ -167,7 +207,7 @@ func (c *cacheImpl) FormatKey(args ...interface{}) string {
 	return join(args...)
 }
 
-// Del removes a value from the cache
+// Del removes a value from the cache.
 func (c *cacheImpl) Del(ctx context.Context, key string) error {
 	return c.cache.Delete(ctx, c.FormatKey(key))
 }
@@ -177,29 +217,33 @@ func (c *cacheImpl) Del(ctx context.Context, key string) error {
 func BuildKeys(base string, params ...string) []interface{} {
 	keys := make([]interface{}, 0, len(params)+1)
 	for _, param := range params {
-		keys = append(keys, param)
+		if param != "" {
+			keys = append(keys, param)
+		}
 	}
 	keys = append(keys, base)
 	return keys
 }
 
-// join concatenates multiple arguments into a single string, separated by colons
+// join concatenates multiple arguments into a single string, separated by colons.
 func join(args ...interface{}) string {
-	s := make([]string, len(args))
-	for i, v := range args {
-		switch v := v.(type) {
+	s := make([]string, 0, len(args))
+	for _, v := range args {
+		switch val := v.(type) {
 		case string:
-			s[i] = v
+			s = append(s, val)
 		case *string:
-			if v != nil {
-				s[i] = *v
+			if val != nil {
+				s = append(s, *val)
 			} else {
-				s[i] = ""
+				s = append(s, "")
 			}
+		case nil:
+			s = append(s, "")
 		case int64, uint64, float64, bool, *big.Int:
-			s[i] = fmt.Sprintf("%v", v)
+			s = append(s, fmt.Sprintf("%v", val))
 		default:
-			s[i] = fmt.Sprintf("%+v", v)
+			s = append(s, fmt.Sprintf("%+v", val))
 		}
 	}
 	return strings.Join(s, ":")

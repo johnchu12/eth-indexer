@@ -2,7 +2,6 @@ package logger
 
 import (
 	"os"
-	"strings"
 	"time"
 
 	"github.com/golang-module/carbon/v2"
@@ -10,88 +9,69 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-// gin logger
-type CronLog struct {
-	Logger interface {
-		// Info logs routine messages about cron's operation.
-		Info(msg string, keysAndValues ...interface{})
-		// Error logs an error condition.
-		Error(err error, msg string, keysAndValues ...interface{})
-	}
-}
-
-func (l *CronLog) Info(msg string, keysAndValues ...interface{}) {
-	zap.S().Infow(msg, keysAndValues...)
-}
-
-func (l *CronLog) Error(err error, msg string, keysAndValues ...interface{}) {
-	zap.S().Warnw(msg, keysAndValues...)
-}
-
-func (l *CronLog) Write(p []byte) (n int, err error) {
-	l.Logger.Info(strings.TrimSpace(string(p)))
-	return len(p), nil
-}
-
-// global logger
+// Infow logs a message with the given key-value pairs.
 func Infow(msg string, keysAndValues ...interface{}) {
 	zap.S().Infow(msg, keysAndValues...)
 }
+
+// Infof logs a formatted message.
 func Infof(template string, args ...interface{}) {
 	zap.S().Infof(template, args...)
 }
+
+// Warnw logs a warning message with the given key-value pairs.
 func Warnw(msg string, keysAndValues ...interface{}) {
 	zap.S().Warnw(msg, keysAndValues...)
 }
+
+// Warnf logs a formatted warning message.
 func Warnf(template string, args ...interface{}) {
 	zap.S().Warnf(template, args...)
 }
 
+// Errorw logs an error message with the given key-value pairs and includes a stack trace.
 func Errorw(msg string, keysAndValues ...interface{}) {
-	// 指定跳過的調用棧幀數,這裡跳過了 logger 包內部的調用
 	stackTrace := zap.StackSkip("stacktrace", 1)
-
-	// 記錄錯誤日誌,並包含調用棧信息
 	zap.L().Sugar().Errorw(msg, append(keysAndValues, stackTrace)...)
 }
 
+// Errorf logs a formatted error message.
 func Errorf(template string, args ...interface{}) {
-	// 使用修改後的 logger 記錄錯誤
 	zap.S().Errorf(template, args...)
 }
 
+// ErrorfWithStack logs a formatted error message with an included stack trace.
 func ErrorfWithStack(template string, args ...interface{}) {
-	// 使用 zap.S().With() 添加堆棧跟蹤作為結構化字段
 	logger := zap.S().With(zap.StackSkip("stacktrace", 1))
-
-	// 使用修改後的 logger 記錄錯誤
 	logger.Errorf(template, args...)
 }
 
+// InfoField logs an informational message with additional structured fields.
 func InfoField(template string, fields ...zapcore.Field) {
 	zap.L().Info(template, fields...)
 }
 
+// GetLogger returns the global zap.Logger instance.
 func GetLogger() *zap.Logger {
 	return zap.L()
 }
 
+// Init initializes the global logger with the specified configuration.
 func Init() *zap.Logger {
 	cfg := zap.NewProductionEncoderConfig()
 	cfg.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
-		// enc.AppendString(cast.ToString(t.UnixMilli()))
 		enc.AppendString(carbon.CreateFromTimestamp(t.Unix()).ToDateTimeString())
 	}
 	cfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
-	var cores []zapcore.Core
 
-	lv := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
+	levelEnabler := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
 		return lvl >= zapcore.DebugLevel
 	})
 
 	core := zapcore.NewCore(
 		zapcore.NewConsoleEncoder(cfg),
 		os.Stderr,
+		levelEnabler,
 		// zapcore.AddSync(&lumberjack.Logger{
 		// 	Filename:   fmt.Sprintf("%s/%s.log", targetLogFolder, name),
 		// 	MaxSize:    600,
@@ -100,9 +80,7 @@ func Init() *zap.Logger {
 		// 	Compress:   true,
 		// 	LocalTime:  true,
 		// }),
-		lv,
 	)
-	cores = append(cores, core)
 
 	options := []zap.Option{
 		// zap.AddCaller(),
@@ -115,10 +93,7 @@ func Init() *zap.Logger {
 		// }),
 	}
 
-	logger := zap.New(zapcore.NewTee(cores...), options...)
-
-	// 會卡住
-	// zap.RedirectStdLog(logger)
+	logger := zap.New(core, options...)
 
 	zap.ReplaceGlobals(logger)
 

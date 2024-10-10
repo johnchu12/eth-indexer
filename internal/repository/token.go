@@ -10,7 +10,7 @@ import (
 )
 
 // GetTokenByAddress retrieves a token by its address from the database.
-func (r *repository) GetTokenByAddress(db DB, ctx context.Context, address string) (*model.Token, error) {
+func (r *repository) GetTokenByAddress(ctx context.Context, address string) (*model.Token, error) {
 	const query = `
 		SELECT id, name, symbol, decimals, created_at
 		FROM tokens
@@ -18,7 +18,7 @@ func (r *repository) GetTokenByAddress(db DB, ctx context.Context, address strin
 	`
 
 	token := &model.Token{}
-	err := db.QueryRow(ctx, query, address).Scan(
+	err := r.db.QueryRow(ctx, query, address).Scan(
 		&token.ID,
 		&token.Name,
 		&token.Symbol,
@@ -27,23 +27,23 @@ func (r *repository) GetTokenByAddress(db DB, ctx context.Context, address strin
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return &model.Token{}, model.ErrTokenNotFound
+			return nil, model.ErrTokenNotFound
 		}
-		return &model.Token{}, fmt.Errorf("failed to retrieve token: %w", err)
+		return nil, fmt.Errorf("failed to retrieve token: %w", err)
 	}
 
 	return token, nil
 }
 
 // CreateToken inserts a new token into the database.
-func (r *repository) CreateToken(db DB, ctx context.Context, token *model.Token) error {
+func (r *repository) CreateToken(ctx context.Context, token *model.Token) error {
 	const query = `
 		INSERT INTO tokens (id, name, symbol, decimals)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, created_at
 	`
 
-	err := db.QueryRow(
+	err := r.db.QueryRow(
 		ctx,
 		query,
 		token.ID,

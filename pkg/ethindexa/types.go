@@ -7,6 +7,8 @@ import (
 
 	"hw/internal/service"
 
+	myclient "hw/pkg/ethindexa/ethclient"
+
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -17,12 +19,15 @@ import (
 type Event struct {
 	EventName       string
 	Args            map[string]interface{}
+	Block           myclient.GetBlockResponse
+	Transaction     myclient.GetTransactionResponse
 	TransactionHash common.Hash
 	BlockHash       common.Hash
 	ContractAddress common.Address
 	ContractName    string
 	NetworkName     string
 	Ctx             context.Context
+	Cancel          context.CancelFunc
 }
 
 // IndexerService provides access to the Ethereum client and the PostgreSQL database.

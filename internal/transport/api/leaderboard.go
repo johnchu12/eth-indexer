@@ -1,9 +1,10 @@
 package api
 
 import (
+	"net/http"
 	"sort"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/go-chi/render"
 	"github.com/jackc/pgx/v5"
 	"github.com/pkg/errors"
 )
@@ -14,30 +15,31 @@ type UserPoints struct {
 	Points  float64 `json:"points"`
 }
 
-// leaderboardResponse represents the response structure for the leaderboard.
-type leaderboardResponse struct {
+// LeaderboardResponse represents the response structure for the leaderboard.
+type LeaderboardResponse struct {
 	Users []UserPoints `json:"users"`
 }
 
 // GetLeaderboard retrieves the leaderboard data and returns it as JSON.
-func (s Server) GetLeaderboard(c *fiber.Ctx) error {
+func (s *Server) GetLeaderboard(w http.ResponseWriter, r *http.Request) {
 	// Fetch users from the domain
-	users, err := s.Service.GetLeaderboard(c.Context())
+	users, err := s.Service.GetLeaderboard(r.Context())
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Return empty response if no rows are found
-			return c.JSON(&leaderboardResponse{
+			res := LeaderboardResponse{
 				Users: []UserPoints{},
-			})
+			}
+			render.JSON(w, r, res)
+			return
 		}
 		// Return internal server error for other errors
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": err.Error(),
-		})
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	// Initialize response with preallocated capacity
-	res := &leaderboardResponse{
+	res := LeaderboardResponse{
 		Users: make([]UserPoints, 0, len(users)),
 	}
 
@@ -54,5 +56,6 @@ func (s Server) GetLeaderboard(c *fiber.Ctx) error {
 		return res.Users[i].Points > res.Users[j].Points
 	})
 
-	return c.JSON(res)
+	// Respond with the sorted leaderboard
+	render.JSON(w, r, res)
 }

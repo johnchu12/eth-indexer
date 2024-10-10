@@ -6,17 +6,59 @@ import (
 
 	"hw/pkg/common"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PostgresDB encapsulates a pgx connection pool.
-type PostgresDB struct {
-	pool *pgxpool.Pool
+// mockgen -source=pkg/pg/pg.go -destination=pkg/pg/mocks/pg_mock.go -package=mocks
+
+// PgxPool defines the methods required by pgxpool.Pool.
+type PgxPool interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+	Close()
+	Ping(ctx context.Context) error
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// PoolCreator is a function that creates a new pgxpool.Pool.
-var PoolCreator = func(ctx context.Context, config *pgxpool.Config) (*pgxpool.Pool, error) {
-	return pgxpool.NewWithConfig(ctx, config)
+// PgxTx defines the methods required by pgx.Tx.
+type PgxTx interface {
+	pgx.Tx
+}
+
+type PgxRows interface {
+	pgx.Rows
+}
+
+// PostgresDB encapsulates a pgx connection pool.
+type PostgresDB struct {
+	pool PgxPool
+}
+
+func (db *PostgresDB) Begin(ctx context.Context) (pgx.Tx, error) {
+	return db.pool.Begin(ctx)
+}
+
+func (db *PostgresDB) Close() {
+	db.pool.Close()
+}
+
+func (db *PostgresDB) Ping(ctx context.Context) error {
+	return db.pool.Ping(ctx)
+}
+
+func (db *PostgresDB) Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error) {
+	return db.pool.Exec(ctx, sql, arguments...)
+}
+
+func (db *PostgresDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	return db.pool.Query(ctx, sql, args...)
+}
+
+func (db *PostgresDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return db.pool.QueryRow(ctx, sql, args...)
 }
 
 // NewPostgresDB creates and initializes a new instance of PostgresDB.
@@ -25,6 +67,7 @@ func NewPostgresDB() (*PostgresDB, error) {
 	if connString == "" {
 		return nil, fmt.Errorf("DATABASE_URL is not set")
 	}
+
 	// Set up the connection pool configuration.
 	config, err := pgxpool.ParseConfig(connString)
 	if err != nil {
@@ -43,14 +86,4 @@ func NewPostgresDB() (*PostgresDB, error) {
 	}
 
 	return &PostgresDB{pool: pool}, nil
-}
-
-// Close closes the connection pool.
-func (db *PostgresDB) Close() {
-	db.pool.Close()
-}
-
-// GetPool returns the underlying pgxpool.Pool.
-func (db *PostgresDB) GetPool() *pgxpool.Pool {
-	return db.pool
 }

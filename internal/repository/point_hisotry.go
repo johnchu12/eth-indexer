@@ -8,14 +8,14 @@ import (
 )
 
 // CreatePointsHistory inserts a new PointsHistory record into the database.
-func (r *repository) CreatePointsHistory(db DB, ctx context.Context, pointsHistory *model.PointsHistory) error {
+func (r *repository) CreatePointsHistory(ctx context.Context, pointsHistory *model.PointsHistory) error {
 	const query = `
 		INSERT INTO points_history (token, account, points, description)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id, created_at
 	`
 
-	err := db.QueryRow(
+	err := r.db.QueryRow(
 		ctx,
 		query,
 		pointsHistory.Token,
@@ -31,7 +31,7 @@ func (r *repository) CreatePointsHistory(db DB, ctx context.Context, pointsHisto
 }
 
 // IsOnboardingTaskCompleted checks if the onboarding task is completed for the specified account.
-func (r *repository) IsOnboardingTaskCompleted(db DB, ctx context.Context, account string) (bool, error) {
+func (r *repository) IsOnboardingTaskCompleted(ctx context.Context, account string) (bool, error) {
 	const (
 		description = "onboarding_task"
 		query       = `
@@ -42,7 +42,7 @@ func (r *repository) IsOnboardingTaskCompleted(db DB, ctx context.Context, accou
 	)
 
 	var count int
-	if err := db.QueryRow(ctx, query, account, description).Scan(&count); err != nil {
+	if err := r.db.QueryRow(ctx, query, account, description).Scan(&count); err != nil {
 		return false, fmt.Errorf("failed to retrieve points history records: %w", err)
 	}
 
@@ -50,7 +50,7 @@ func (r *repository) IsOnboardingTaskCompleted(db DB, ctx context.Context, accou
 }
 
 // GetPointsHistory retrieves the points history for the specified account and token.
-func (r *repository) GetPointsHistory(db DB, ctx context.Context, account, token string) ([]model.PointsHistory, error) {
+func (r *repository) GetPointsHistory(ctx context.Context, account, token string) ([]model.PointsHistory, error) {
 	const query = `
 		SELECT id, token, account, points, description, created_at
 		FROM points_history
@@ -58,7 +58,7 @@ func (r *repository) GetPointsHistory(db DB, ctx context.Context, account, token
 		ORDER BY created_at DESC
 	`
 
-	rows, err := db.Query(ctx, query, account, token)
+	rows, err := r.db.Query(ctx, query, account, token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query points history: %w", err)
 	}

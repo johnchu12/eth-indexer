@@ -1,199 +1,144 @@
 package middleware
 
 import (
+	"context"
 	"fmt"
-	"io"
-	"os"
+	"net/http"
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
-// Config defines the config for logger middleware
-type Config struct {
-	// Next defines a function to skip this middleware when returned true.
-	Next func(c *fiber.Ctx) bool
+// RequestIDMiddleware returns a Chi middleware for generating and setting a Request ID.
+func RequestIDMiddleware() func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Generate and set the Request ID
+			requestID := generateRequestID(r)
+			ctx := r.Context()
+			ctx = contextWithRequestID(ctx, requestID)
+			r = r.WithContext(ctx)
 
-	// Logger is the zap logger instance
-	Logger *zap.Logger
+			// Optionally set the Request ID in the response header
+			w.Header().Set("X-Request-ID", requestID)
 
-	// TimeFormat defines the time format for log timestamps.
-	TimeFormat string
-
-	// TimeZone can be specified, such as "UTC" and "America/New_York" and "Asia/Shanghai", etc
-	TimeZone string
-
-	// Output is the io.Writer to write the log message to
-	Output io.Writer
-}
-
-// ConfigDefault is the default configuration
-var ConfigDefault = Config{
-	Next:       nil,
-	Logger:     nil,
-	TimeFormat: "2006-01-02 15:04:05",
-	TimeZone:   "Local",
-	Output:     os.Stdout,
-}
-
-// UseLog is a helper function to quickly set up the logger middleware
-func UseLog(app *fiber.App, log *zap.Logger) {
-	app.Use(New(Config{
-		Logger:     log,
-		TimeFormat: "2006-01-02 15:04:05",
-		TimeZone:   "UTC",
-	}))
-}
-
-// New creates a new middleware handler
-func New(config ...Config) fiber.Handler {
-	// Set default config
-	cfg := ConfigDefault
-
-	// Override config if provided
-	if len(config) > 0 {
-		cfg = config[0]
-
-		// Set default values
-		if cfg.Next == nil {
-			cfg.Next = ConfigDefault.Next
-		}
-
-		if cfg.TimeFormat == "" {
-			cfg.TimeFormat = ConfigDefault.TimeFormat
-		}
-
-		if cfg.TimeZone == "" {
-			cfg.TimeZone = ConfigDefault.TimeZone
-		}
-
-		if cfg.Output == nil {
-			cfg.Output = ConfigDefault.Output
-		}
-	}
-
-	// Get timezone location
-	tz, err := time.LoadLocation(cfg.TimeZone)
-	if err != nil {
-		panic(err)
-	}
-
-	// Return new handler
-	return func(c *fiber.Ctx) error {
-		// Don't execute middleware if Next returns true
-		if cfg.Next != nil && cfg.Next(c) {
-			return c.Next()
-		}
-
-		// Handle RequestID
-		spanID := getSpanIDFromContext(c)
-		var requestID string
-		if spanID != "00000000000000000000000000000000" {
-			requestID = spanID
-		} else {
-			requestID = "11" + uuid.New().String()[:8]
-		}
-
-		c.Locals("requestid", requestID)
-
-		// Set variables
-		start := time.Now().In(tz)
-		path := c.Path()
-		method := c.Method()
-
-		// Handle request
-		chainErr := c.Next()
-
-		// Set latency
-		stop := time.Now().In(tz)
-		latency := stop.Sub(start)
-
-		// Get status code
-		status := c.Response().StatusCode()
-
-		// Get client IP
-		clientIP := getClientIP(c)
-
-		// Get user agent
-		userAgent := c.Get(fiber.HeaderUserAgent)
-		if userAgent == "" {
-			userAgent = "unknown agent"
-		}
-
-		// Format log message
-		logMessage := fmt.Sprintf("%s %d %s %s %s %s %.3fKB %s \"%s\"",
-			method,
-			status,
-			timeDurationFormat(latency),
-			requestID,
-			clientIP,
-			path,
-			float64(c.Response().Header.ContentLength())/1024.0,
-			c.Protocol(),
-			userAgent,
-		)
-
-		if chainErr != nil {
-			logMessage = fmt.Sprintf("%s %s", logMessage, chainErr.Error())
-		}
-
-		// Log message
-		if cfg.Logger != nil {
-			cfg.Logger.Info(logMessage)
-		} else {
-			_, _ = cfg.Output.Write([]byte(logMessage + "\n"))
-		}
-
-		return chainErr
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 
-func GetClientIP(c *fiber.Ctx) string {
-	return getClientIP(c)
+// LoggingMiddleware returns a Chi middleware for logging requests upon completion.
+func LoggingMiddleware(logger *zap.Logger) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Generate and set the Request ID
+			requestID := generateRequestID(r)
+			ctx := r.Context()
+			ctx = contextWithRequestID(ctx, requestID)
+			r = r.WithContext(ctx)
+
+			// Wrap the ResponseWriter to capture status code and response size
+			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+
+			start := time.Now()
+			// Execute the next handler
+			next.ServeHTTP(ww, r)
+			duration := time.Since(start)
+
+			// Extract necessary request information
+			method := r.Method
+			status := ww.Status()
+			path := r.URL.Path
+			proto := r.Proto
+			userAgent := r.UserAgent()
+			if userAgent == "" {
+				userAgent = "unknown agent"
+			}
+			clientIP := getClientIP(r)
+			// Note: ww.BytesWritten() returns bytes, not KB
+			responseSizeKB := float64(ww.BytesWritten()) / 1024.0
+
+			// Extract error information (ServeHTTP does not return errors, so keep it empty)
+			errText := ""
+
+			// Log the request
+			logger.Info(fmt.Sprintf("%s %d %s %s %s %s %.3fKB %s \"%s\" %v",
+				method,
+				status,
+				timeDurationFormat(duration),
+				requestID,
+				clientIP,
+				path,
+				responseSizeKB, // Note: this is not the response body size
+				proto,
+				userAgent,
+				errText,
+			))
+		})
+	}
 }
 
-func getClientIP(c *fiber.Ctx) string {
-	// First try to get IP from CF-Connecting-IP header
-	clientIP := c.Get("CF-Connecting-IP")
+// generateRequestID generates a Request ID, preferring Span ID if available, otherwise generating a UUID.
+func generateRequestID(r *http.Request) string {
+	spanID := getSpanIDFromContext(r)
+	if spanID != "" {
+		return spanID
+	}
+	return "11" + uuid.New().String()[:8]
+}
+
+// contextWithRequestID sets the request ID in the context.
+func contextWithRequestID(ctx context.Context, requestID string) context.Context {
+	return context.WithValue(ctx, "requestid", requestID)
+}
+
+// getSpanIDFromContext extracts the Span ID from the request context.
+func getSpanIDFromContext(r *http.Request) string {
+	span := trace.SpanFromContext(r.Context())
+	if span.SpanContext().HasTraceID() {
+		return span.SpanContext().TraceID().String()
+	}
+	return ""
+}
+
+// getClientIP extracts the client's IP address.
+func getClientIP(r *http.Request) string {
+	// First attempt to get IP from CF-Connecting-IP header
+	clientIP := r.Header.Get("CF-Connecting-IP")
 	if clientIP != "" {
 		return clientIP
 	}
-	// If not found, try X-Forwarded-For header
-	clientIP = c.Get("X-Forwarded-For")
+	// If the above header is not present, attempt to get from X-Forwarded-For
+	clientIP = r.Header.Get("X-Forwarded-For")
 	if clientIP != "" {
-		return strings.Split(clientIP, ",")[0] // X-Forwarded-For may contain multiple IPs, we only need the first one
+		// X-Forwarded-For may contain multiple IPs, take the first one
+		return strings.Split(clientIP, ",")[0]
 	}
-	// If all else fails, return the RemoteIP
-	return c.IP()
+	// If both methods fail, return RemoteAddr
+	ip := r.RemoteAddr
+	// Remove port number
+	if colon := strings.LastIndex(ip, ":"); colon != -1 {
+		return ip[:colon]
+	}
+	return ip
 }
 
+// timeDurationFormat formats the duration to display in seconds or milliseconds.
 func timeDurationFormat(t time.Duration) string {
 	totalSeconds := t.Seconds()
 
 	if totalSeconds >= 1 {
-		// Greater than or equal to 1 second, show seconds with three decimal places
+		// Display seconds with three decimal places
 		return fmt.Sprintf("%.3fs", totalSeconds)
 	} else if totalSeconds >= 0.001 {
-		// Greater than or equal to 1 millisecond, show milliseconds with three decimal places
+		// Display milliseconds with three decimal places
 		return fmt.Sprintf("%.3fms", totalSeconds*1000)
 	}
 
-	// For other cases, use the default string representation
+	// Otherwise, use the default string representation
 	return t.String()
-}
-
-// getSpanIDFromContext extracts the span ID from the request context
-func getSpanIDFromContext(c *fiber.Ctx) string {
-	// Get the context from Fiber's fasthttp.RequestCtx
-	ctx := c.Context()
-
-	// Extract the span from the context
-	span := trace.SpanFromContext(ctx)
-
-	// Return the trace ID as a string
-	return span.SpanContext().TraceID().String()
 }

@@ -24,31 +24,25 @@ func HandleUSDCWETHSwap(idx *ethindexa.IndexerService, event ethindexa.Event) {
 	// token0 = USDC
 	// token1 = WETH
 
-	block, err := idx.GetBlockByHash(event.BlockHash)
-	if err != nil {
-		logger.Errorf("Error retrieving block details: %v", err)
-		return
-	}
-
-	tx, err := idx.GetTransactionByHash(event.TransactionHash)
-	if err != nil {
-		logger.Errorf("Error retrieving transaction details: %v", err)
-		return
-	}
+	// startTime := time.Now()
+	// defer func() {
+	// 	elapsed := time.Since(startTime)
+	// 	logger.Infof("Elapsed time: %s", elapsed)
+	// }()
 
 	// Retrieve user account ID
-	accountID := strings.ToLower(tx.From.Hex())
+	accountID := strings.ToLower(event.Transaction.From)
 
 	// create request id for tracing
 	reqID := uuid.New().String()[:8]
 
 	// print processed message
-	logger.Infof("#%s:%s:%s %s %s at %d", event.NetworkName, event.ContractName, event.EventName, event.ContractAddress, event.TransactionHash.Hex(), block.Time())
+	logger.Infof("#%s:%s:%s %s %s at %d", event.NetworkName, event.ContractName, event.EventName, event.ContractAddress, event.TransactionHash.Hex(), event.Block.Number())
 
 	ctx := context.WithValue(event.Ctx, "reqID", reqID)
 
 	// Retrieve or create USDC token information
-	usdcToken, err := idx.Service.GetOrCreateToken(ctx, idx.Client, USDC, block.Number().Int64())
+	usdcToken, err := idx.Service.GetOrCreateToken(ctx, idx.Client, USDC, event.Block.Number().Int64())
 	if err != nil {
 		logger.Errorw("Error retrieving USDC token:", err)
 		return
@@ -66,7 +60,7 @@ func HandleUSDCWETHSwap(idx *ethindexa.IndexerService, event ethindexa.Event) {
 		Account:         accountID,
 		TransactionHash: event.TransactionHash.Hex(),
 		UsdValue:        usdValue.Div(bigrat.NewBigN(10).Pow(usdcToken.Decimals)).ToTruncateFloat64(6),
-		LastUpdated:     time.Unix(int64(block.Time()), 0),
+		LastUpdated:     time.Unix(event.Block.Time(), 0),
 	}
 
 	if err := idx.Service.CreateSwapHistory(event.Ctx, swapHistory); err != nil {

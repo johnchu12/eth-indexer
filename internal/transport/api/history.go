@@ -1,43 +1,50 @@
 package api
 
 import (
-	"github.com/gofiber/fiber/v2"
+	"net/http"
+
+	"hw/pkg/micro-tree/http/middleware"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/render"
 )
 
+// historyTask represents a single task with a description and points.
 type historyTask struct {
 	Description string  `json:"description"`
 	Points      float64 `json:"points"`
 	CreatedAt   string  `json:"created_at"`
 }
 
+// historyResponse structures the JSON response with tasks categorized by tokens.
 type historyResponse struct {
 	Tasks map[string][]historyTask `json:"tasks"`
 }
 
-// GetHistory handles fetching the user's history
-func (s Server) GetHistory(c *fiber.Ctx) error {
-	id := c.Params("id")
-	ctx := c.Context()
+// GetHistory handles fetching the user's history.
+func (s Server) GetHistory(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
 
 	res := &historyResponse{
 		Tasks: make(map[string][]historyTask),
 	}
 
 	// Get user swap summary
-	swapSummary, err := s.Service.GetUserSwapSummary(ctx, id)
+	swapSummary, err := s.Service.GetUserSwapSummary(r.Context(), id)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": err.Error(),
-		})
+		middleware.HTTPErrorLogging(w, r, err)
+		render.Render(w, r, &errorResponse{Error: err.Error()})
+		return
 	}
 
 	// Iterate over each token in swap summary
 	for token := range swapSummary {
-		pointsHistory, err := s.Service.GetPointsHistory(ctx, id, token)
+		pointsHistory, err := s.Service.GetPointsHistory(r.Context(), id, token)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": err.Error(),
-			})
+			middleware.HTTPErrorLogging(w, r, err)
+			// handleError(w, http.StatusInternalServerError, err)
+			render.Render(w, r, &errorResponse{Error: err.Error()})
+			return
 		}
 
 		for _, points := range pointsHistory {
@@ -49,5 +56,5 @@ func (s Server) GetHistory(c *fiber.Ctx) error {
 		}
 	}
 
-	return c.JSON(res)
+	render.JSON(w, r, res)
 }

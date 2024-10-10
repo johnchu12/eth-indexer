@@ -9,14 +9,14 @@ import (
 )
 
 // CreateSwapHistory inserts a new swap history record into the database.
-func (r *repository) CreateSwapHistory(db DB, ctx context.Context, swapHistory *model.SwapHistory) error {
+func (r *repository) CreateSwapHistory(ctx context.Context, swapHistory *model.SwapHistory) error {
 	const query = `
 		INSERT INTO swap_history (token, account, transaction_hash, usd_value, last_updated)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, created_at
 	`
 
-	err := db.QueryRow(
+	err := r.db.QueryRow(
 		ctx,
 		query,
 		swapHistory.Token,
@@ -33,7 +33,7 @@ func (r *repository) CreateSwapHistory(db DB, ctx context.Context, swapHistory *
 }
 
 // GetSwapTotalUsd retrieves the total USD value of swaps for a given account and token.
-func (r *repository) GetSwapTotalUsd(db DB, ctx context.Context, account, token string) (float64, error) {
+func (r *repository) GetSwapTotalUsd(ctx context.Context, account, token string) (float64, error) {
 	const query = `
 		SELECT SUM(usd_value)
 		FROM swap_history
@@ -41,7 +41,7 @@ func (r *repository) GetSwapTotalUsd(db DB, ctx context.Context, account, token 
 	`
 
 	var totalUsd float64
-	err := db.QueryRow(ctx, query, account, token).Scan(&totalUsd)
+	err := r.db.QueryRow(ctx, query, account, token).Scan(&totalUsd)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get total swap USD: %w", err)
 	}
@@ -50,7 +50,7 @@ func (r *repository) GetSwapTotalUsd(db DB, ctx context.Context, account, token 
 }
 
 // GetUserSwapSummary retrieves the sum of USD values grouped by token for a given account.
-func (r *repository) GetUserSwapSummary(db DB, ctx context.Context, account string) (map[string]float64, error) {
+func (r *repository) GetUserSwapSummary(ctx context.Context, account string) (map[string]float64, error) {
 	const query = `
 		SELECT token, SUM(usd_value)
 		FROM swap_history
@@ -58,7 +58,7 @@ func (r *repository) GetUserSwapSummary(db DB, ctx context.Context, account stri
 		GROUP BY token
 	`
 
-	rows, err := db.Query(ctx, query, account)
+	rows, err := r.db.Query(ctx, query, account)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve token USD sums: %w", err)
 	}
@@ -82,7 +82,7 @@ func (r *repository) GetUserSwapSummary(db DB, ctx context.Context, account stri
 }
 
 // GetUserSwapSummaryLast7Days retrieves the total USD and percentage of swaps for each user over the past seven days for a specific token.
-func (r *repository) GetUserSwapSummaryLast7Days(db DB, ctx context.Context, referenceTime time.Time, token string) ([]model.UserSwapPercentage, error) {
+func (r *repository) GetUserSwapSummaryLast7Days(ctx context.Context, referenceTime time.Time, token string) ([]model.UserSwapPercentage, error) {
 	const query = `
 		WITH total_usd AS (
 			SELECT SUM(usd_value) AS sum_usd_value
@@ -102,7 +102,7 @@ func (r *repository) GetUserSwapSummaryLast7Days(db DB, ctx context.Context, ref
 	startTime := referenceTime.AddDate(0, 0, -7)
 	endTime := referenceTime
 
-	rows, err := db.Query(ctx, query, startTime, endTime, token)
+	rows, err := r.db.Query(ctx, query, startTime, endTime, token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve user swap percentages: %w", err)
 	}
